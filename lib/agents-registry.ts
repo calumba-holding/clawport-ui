@@ -297,80 +297,98 @@ function discoverAgents(workspacePath: string): AgentEntry[] | null {
 }
 
 // ---------------------------------------------------------------------------
-// CLI-based discovery (openclaw agents list)
+// CLI-based multi-workspace discovery (openclaw agents list)
 // ---------------------------------------------------------------------------
 
 /**
- * Discover agents via `openclaw agents list --json`.
- * Returns AgentEntry[] for any agents found, or null on failure.
- * This catches agents defined in openclaw.json that don't have
- * filesystem directories under agents/.
+ * Raw entry from `openclaw agents list --json`.
+ *
+ * Real CLI output shape (verified against OpenClaw docs + live CLI):
+ *   { id, identityName, identityEmoji, identitySource,
+ *     workspace, agentDir, model, bindings, isDefault, routes }
  */
-function discoverAgentsViaCli(openclawBin: string): AgentEntry[] | null {
+interface CliAgentEntry {
+  id: string
+  identityName?: string
+  identityEmoji?: string
+  workspace?: string
+  isDefault?: boolean
+}
+
+/**
+ * Call `openclaw agents list --json` and return parsed entries.
+ * Returns null on any failure (CLI not found, bad JSON, timeout).
+ */
+export function listCliAgents(openclawBin: string): CliAgentEntry[] | null {
   try {
     const raw = execSync(`${openclawBin} agents list --json`, {
       encoding: 'utf-8',
       timeout: 10000,
     })
     const parsed = JSON.parse(raw)
-    const agents: unknown[] = Array.isArray(parsed)
-      ? parsed
-      : parsed.agents ?? parsed.data ?? []
-
+    const agents: unknown[] = Array.isArray(parsed) ? parsed : []
     if (agents.length === 0) return null
-
-    let colorIndex = 0
-    return agents.map((entry) => {
-      const a = entry as Record<string, unknown>
-      const id = String(a.id ?? a.name ?? a.slug ?? '')
-      const name = String(a.name ?? a.displayName ?? slugToName(id))
-      const title = String(a.title ?? a.role ?? 'Agent')
-      const reportsTo = a.reportsTo != null ? String(a.reportsTo) : null
-      const directReports = Array.isArray(a.directReports)
-        ? a.directReports.map(String)
-        : []
-      const tools = Array.isArray(a.tools) ? a.tools.map(String) : ['read', 'write']
-
-      return {
-        id,
-        name,
-        title,
-        reportsTo,
-        directReports,
-        soulPath: typeof a.soulPath === 'string' ? a.soulPath : null,
-        voiceId: typeof a.voiceId === 'string' ? a.voiceId : null,
-        color: typeof a.color === 'string' ? a.color : DISCOVER_COLORS[colorIndex++ % DISCOVER_COLORS.length],
-        emoji: typeof a.emoji === 'string' ? a.emoji : name.charAt(0).toUpperCase(),
-        tools,
-        memoryPath: typeof a.memoryPath === 'string' ? a.memoryPath : null,
-        description: typeof a.description === 'string' ? a.description : `${name} agent.`,
-      }
-    })
+    return agents as CliAgentEntry[]
   } catch {
     return null
   }
 }
 
 /**
- * Merge CLI-discovered agents into an existing registry.
- * Only adds agents whose IDs are not already present.
- * Also patches directReports on existing agents to include new CLI agents.
+ * Scan additional workspaces found via CLI that differ from the primary
+ * WORKSPACE_PATH. For each extra workspace, run discoverAgents() and
+ * merge results into the existing registry.
+ *
+ * Agents from other workspaces are independent (no cross-workspace hierarchy).
+ * If the other workspace has a root orchestrator, it becomes a top-level peer
+ * in the primary workspace's registry.
  */
-function mergeCliAgents(existing: AgentEntry[], cliAgents: AgentEntry[]): AgentEntry[] {
+function mergeExtraWorkspaces(
+  existing: AgentEntry[],
+  cliAgents: CliAgentEntry[],
+  primaryWorkspace: string,
+): AgentEntry[] {
   const existingIds = new Set(existing.map(a => a.id))
   const added: AgentEntry[] = []
+  let colorIndex = existing.length
 
-  for (const ca of cliAgents) {
-    if (existingIds.has(ca.id)) continue
-    added.push(ca)
-    existingIds.add(ca.id)
+  for (const cli of cliAgents) {
+    const ws = cli.workspace
+    // Skip agents whose workspace matches the primary (already discovered)
+    if (!ws || ws === primaryWorkspace) continue
 
-    // If the CLI agent reports to an existing agent, add it to that agent's directReports
-    if (ca.reportsTo) {
-      const parent = existing.find(a => a.id === ca.reportsTo)
-      if (parent && !parent.directReports.includes(ca.id)) {
-        parent.directReports.push(ca.id)
+    // Try discovering agents from this workspace's filesystem
+    const discovered = discoverAgents(ws)
+    if (discovered) {
+      for (const agent of discovered) {
+        if (existingIds.has(agent.id)) continue
+        // Agents from other workspaces are top-level peers (no cross-workspace hierarchy)
+        if (agent.reportsTo && !existingIds.has(agent.reportsTo)) {
+          agent.reportsTo = null
+        }
+        added.push(agent)
+        existingIds.add(agent.id)
       }
+    } else {
+      // Workspace has no agents/ dir — create a minimal entry from CLI identity
+      const id = cli.id
+      if (existingIds.has(id)) continue
+      const name = cli.identityName || slugToName(id)
+      added.push({
+        id,
+        name,
+        title: 'Agent',
+        reportsTo: null,
+        directReports: [],
+        soulPath: null,
+        voiceId: null,
+        color: DISCOVER_COLORS[colorIndex++ % DISCOVER_COLORS.length],
+        emoji: cli.identityEmoji || name.charAt(0).toUpperCase(),
+        tools: ['read', 'write'],
+        memoryPath: null,
+        description: `${name} agent.`,
+      })
+      existingIds.add(id)
     }
   }
 
@@ -383,8 +401,8 @@ function mergeCliAgents(existing: AgentEntry[], cliAgents: AgentEntry[]): AgentE
  * Resolution order:
  *   1. $WORKSPACE_PATH/clawport/agents.json  (user's own config)
  *   2. Auto-discovered from $WORKSPACE_PATH   (agents/ directory scan)
- *      + merged with `openclaw agents list --json` (catches config-only agents)
- *   3. CLI-only discovery via `openclaw agents list --json`
+ *      + merged with other workspaces from `openclaw agents list --json`
+ *   3. CLI-only discovery (scans each agent's workspace)
  *   4. Bundled lib/agents.json               (default example registry)
  */
 export function loadRegistry(): AgentEntry[] {
@@ -403,21 +421,25 @@ export function loadRegistry(): AgentEntry[] {
       }
     }
 
-    // 2. Auto-discover from workspace filesystem
+    // 2. Auto-discover from primary workspace filesystem
     const discovered = discoverAgents(workspacePath)
 
-    // 2b. Merge in any agents known to OpenClaw CLI but missing from filesystem
+    // 2b. Merge agents from other workspaces known to the CLI
     if (discovered && openclawBin) {
-      const cliAgents = discoverAgentsViaCli(openclawBin)
-      if (cliAgents) return mergeCliAgents(discovered, cliAgents)
+      const cliAgents = listCliAgents(openclawBin)
+      if (cliAgents && cliAgents.length > 1) {
+        return mergeExtraWorkspaces(discovered, cliAgents, workspacePath)
+      }
       return discovered
     }
     if (discovered) return discovered
 
-    // 3. CLI-only discovery (no workspace agents/ dir, but CLI knows about agents)
+    // 3. CLI-only: no primary workspace agents, scan each CLI agent's workspace
     if (openclawBin) {
-      const cliAgents = discoverAgentsViaCli(openclawBin)
-      if (cliAgents) return cliAgents
+      const cliAgents = listCliAgents(openclawBin)
+      if (cliAgents) {
+        return mergeExtraWorkspaces([], cliAgents, '')
+      }
     }
   }
 

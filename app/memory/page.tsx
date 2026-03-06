@@ -1424,12 +1424,11 @@ export default function MemoryPage() {
               <div className="flex h-full" style={{ background: "var(--bg)" }}>
                 {/* File list sidebar */}
                 <aside
-                  className={`flex-shrink-0 flex flex-col ${
+                  className={`browser-sidebar flex-shrink-0 flex flex-col ${
                     mobileShowContent && selected ? "hidden md:flex" : "flex"
                   }`}
                   style={{
                     width: "100%",
-                    maxWidth: "100%",
                     background: "var(--material-regular)",
                     backdropFilter: "var(--sidebar-backdrop)",
                     WebkitBackdropFilter: "var(--sidebar-backdrop)",

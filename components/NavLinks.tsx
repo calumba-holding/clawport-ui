@@ -7,6 +7,7 @@ import { Map, MessageSquare, Clock, Activity, Brain, Columns3, BookOpen, Setting
 import type { LucideIcon } from 'lucide-react';
 import type { CronJob } from '@/lib/types';
 import { useSettings } from '@/app/settings-provider';
+import { useAgentsContext } from '@/app/agents-provider';
 
 function getInitials(name: string | null): string {
   if (!name) return '??'
@@ -45,26 +46,10 @@ const NAV_ITEMS: NavItem[] = [
 export function NavLinks({ bottomSlot }: { bottomSlot?: React.ReactNode } = {}) {
   const pathname = usePathname();
   const { settings } = useSettings();
-  const [agentCount, setAgentCount] = useState<number | null>(null);
+  const { agents } = useAgentsContext();
+  const agentCount = agents.length > 0 ? agents.length : null;
   const [cronCount, setCronCount] = useState<number | null>(null);
   const [cronErrorCount, setCronErrorCount] = useState<number | null>(null);
-
-  // Fetch agent count
-  useEffect(() => {
-    fetch('/api/agents')
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data: unknown) => {
-        if (Array.isArray(data)) {
-          setAgentCount(data.length);
-        }
-      })
-      .catch(() => {
-        setAgentCount(null);
-      });
-  }, []);
 
   // Fetch cron error count
   useEffect(() => {

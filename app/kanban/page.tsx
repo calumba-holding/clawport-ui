@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Agent } from '@/lib/types'
+import { useAgentsContext } from '@/app/agents-provider'
 import type { KanbanTicket, TicketStatus, TicketPriority, TeamRole } from '@/lib/kanban/types'
 import {
   loadTickets,
@@ -23,30 +24,17 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 export default function KanbanPage() {
   const [tickets, setTickets] = useState<KanbanStore>({})
-  const [agents, setAgents] = useState<Agent[]>([])
+  const { agents, loading: agentsLoading, error, refresh: refreshAgents } = useAgentsContext()
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [selectedTicket, setSelectedTicket] = useState<KanbanTicket | null>(null)
   const [filterAgentId, setFilterAgentId] = useState<string | null>(null)
 
   const loadData = useCallback(() => {
-    setLoading(true)
-    setError(null)
-
     // Load tickets from localStorage
     const stored = loadTickets()
     setTickets(stored)
-
-    // Load agents from API
-    fetch('/api/agents')
-      .then((r) => {
-        if (!r.ok) throw new Error('Failed to fetch agents')
-        return r.json()
-      })
-      .then((a: Agent[]) => setAgents(a))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false))
+    setLoading(false)
   }, [])
 
   useEffect(() => {

@@ -12,7 +12,8 @@ import {
   Timer,
   Settings,
 } from 'lucide-react';
-import type { Agent, CronJob } from '@/lib/types';
+import type { CronJob } from '@/lib/types';
+import { useAgentsContext } from '@/app/agents-provider';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,7 +111,7 @@ export function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const { agents } = useAgentsContext();
   const [crons, setCrons] = useState<CronJob[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -149,17 +150,7 @@ export function GlobalSearch() {
     // Reset state
     setQuery('');
     setActiveIndex(0);
-    // Fetch agents
-    fetch('/api/agents')
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data: unknown) => {
-        if (Array.isArray(data)) setAgents(data as Agent[]);
-      })
-      .catch(() => setAgents([]));
-    // Fetch crons
+    // Fetch crons (agents come from context)
     fetch('/api/crons')
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);

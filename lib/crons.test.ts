@@ -254,18 +254,25 @@ describe('getCrons - error and lastError', () => {
   })
 })
 
-// --- Error propagation (current implementation throws) ---
+// --- Graceful degradation (returns empty array on failure) ---
 
-describe('getCrons - error propagation', () => {
-  it('throws when execSync throws (CLI not installed)', async () => {
+describe('getCrons - graceful degradation', () => {
+  it('returns empty array when execSync throws (CLI not installed)', async () => {
     mockExecSync.mockImplementation(() => { throw new Error('ENOENT') })
-    await expect(getCrons()).rejects.toThrow('Failed to fetch cron jobs')
-    await expect(getCrons()).rejects.toThrow('ENOENT')
+    const result = await getCrons()
+    expect(result).toEqual([])
   })
 
-  it('throws for invalid JSON output', async () => {
+  it('returns empty array for invalid JSON output', async () => {
     mockExecSync.mockReturnValue('not valid json {{')
-    await expect(getCrons()).rejects.toThrow('Failed to fetch cron jobs')
+    const result = await getCrons()
+    expect(result).toEqual([])
+  })
+
+  it('returns empty array when OPENCLAW_BIN is not set', async () => {
+    vi.unstubAllEnvs()
+    const result = await getCrons()
+    expect(result).toEqual([])
   })
 })
 

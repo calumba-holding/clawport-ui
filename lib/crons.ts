@@ -32,11 +32,22 @@ export async function getCrons(): Promise<CronJob[]> {
   }
 
   try {
-    const openclawBin = requireEnv('OPENCLAW_BIN')
-    const raw = execSync(`${openclawBin} cron list --json`, {
-      encoding: 'utf-8',
-      timeout: 10000,
-    })
+    const openclawBin = process.env.OPENCLAW_BIN
+    if (!openclawBin) {
+      // No binary configured -- return empty list instead of crashing
+      return []
+    }
+
+    let raw: string
+    try {
+      raw = execSync(`${openclawBin} cron list --json`, {
+        encoding: 'utf-8',
+        timeout: 10000,
+      })
+    } catch {
+      // CLI failed (binary not found, no crons, gateway down) -- return empty
+      return []
+    }
 
     const parsed = extractJson(raw) as Record<string, unknown>
     const jobs: unknown[] = Array.isArray(parsed)
@@ -113,9 +124,8 @@ export async function getCrons(): Promise<CronJob[]> {
 
     _cronsCache = { result, ts: Date.now() }
     return result
-  } catch (err) {
-    throw new Error(
-      `Failed to fetch cron jobs: ${err instanceof Error ? err.message : String(err)}`
-    )
+  } catch {
+    // JSON extraction or parsing failed -- return empty rather than 500
+    return []
   }
 }

@@ -3,6 +3,7 @@ import { readFileSync, existsSync, statSync, readdirSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import { execSync } from 'child_process'
 import { requireEnv } from '@/lib/env'
+import { extractJson } from '@/lib/cli-utils'
 
 // ── Date pattern for daily logs ─────────────────────────────────
 
@@ -213,21 +214,45 @@ export function getMemoryStatus(): MemoryStatus {
   }
 
   try {
-    const output = execSync(`${bin} memory status --deep`, {
+    const output = execSync(`${bin} memory status --deep --json`, {
       timeout: 15000,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
 
-    // Try JSON parse first
     try {
-      const data = JSON.parse(output)
+      const data = extractJson(output)
+
+      // New format: array of per-agent status objects
+      // [{ agentId, status: { files, chunks, dirty, provider, vector } }, ...]
+      if (Array.isArray(data) && data.length > 0) {
+        const agents = data as { agentId?: string; status?: Record<string, unknown> }[]
+        const primary = agents[0].status ?? {}
+        const totalEntries = agents.reduce(
+          (sum, a) => sum + (typeof a.status?.chunks === 'number' ? a.status.chunks : 0), 0,
+        )
+        const allIndexed = agents.every(
+          a => (typeof a.status?.files === 'number' && a.status.files > 0) && !a.status?.dirty,
+        )
+        const vec = primary.vector as Record<string, unknown> | undefined
+        return {
+          indexed: allIndexed,
+          lastIndexed: null,
+          totalEntries,
+          vectorAvailable: typeof vec?.available === 'boolean' ? vec.available : null,
+          embeddingProvider: typeof primary.provider === 'string' ? primary.provider : null,
+          raw: output,
+        }
+      }
+
+      // Legacy flat object format
+      const flat = data as Record<string, unknown>
       return {
-        indexed: data.indexed ?? false,
-        lastIndexed: data.lastIndexed ?? null,
-        totalEntries: data.totalEntries ?? null,
-        vectorAvailable: data.vectorAvailable ?? null,
-        embeddingProvider: data.embeddingProvider ?? null,
+        indexed: flat.indexed === true,
+        lastIndexed: typeof flat.lastIndexed === 'string' ? flat.lastIndexed : null,
+        totalEntries: typeof flat.totalEntries === 'number' ? flat.totalEntries : null,
+        vectorAvailable: typeof flat.vectorAvailable === 'boolean' ? flat.vectorAvailable : null,
+        embeddingProvider: typeof flat.embeddingProvider === 'string' ? flat.embeddingProvider : null,
         raw: output,
       }
     } catch {

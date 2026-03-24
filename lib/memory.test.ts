@@ -331,6 +331,53 @@ describe('getMemoryStatus', () => {
     expect(status.lastIndexed).toBeNull()
     expect(status.totalEntries).toBeNull()
   })
+
+  it('parses new array-of-agents format from openclaw memory status --deep --json', () => {
+    mockExecSync.mockReturnValue(JSON.stringify([
+      {
+        agentId: 'main',
+        status: { files: 9, chunks: 13, dirty: false, provider: 'gemini', vector: { available: true } },
+      },
+      {
+        agentId: 'helper',
+        status: { files: 3, chunks: 5, dirty: false, provider: 'gemini', vector: { available: true } },
+      },
+    ]))
+
+    const status = getMemoryStatus()
+    expect(status.indexed).toBe(true)
+    expect(status.totalEntries).toBe(18) // 13 + 5 chunks
+    expect(status.vectorAvailable).toBe(true)
+    expect(status.embeddingProvider).toBe('gemini')
+  })
+
+  it('reports not indexed when any agent has dirty files', () => {
+    mockExecSync.mockReturnValue(JSON.stringify([
+      {
+        agentId: 'main',
+        status: { files: 9, chunks: 13, dirty: false, provider: 'gemini', vector: { available: true } },
+      },
+      {
+        agentId: 'helper',
+        status: { files: 3, chunks: 5, dirty: true, provider: 'gemini', vector: { available: true } },
+      },
+    ]))
+
+    const status = getMemoryStatus()
+    expect(status.indexed).toBe(false)
+  })
+
+  it('reports not indexed when an agent has zero files', () => {
+    mockExecSync.mockReturnValue(JSON.stringify([
+      {
+        agentId: 'main',
+        status: { files: 0, chunks: 0, dirty: false, provider: 'gemini', vector: { available: true } },
+      },
+    ]))
+
+    const status = getMemoryStatus()
+    expect(status.indexed).toBe(false)
+  })
 })
 
 // ── computeMemoryStats ──────────────────────────────────────────
